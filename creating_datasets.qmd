@@ -1,0 +1,280 @@
+---
+title: "Creating Spatial Datasets"
+format: html
+---
+
+# Introduction
+
+This is a brief document detailing how csv data can be converted into a spatial dataset.
+
+## Set Up
+
+First you will need to install and load the required packages. This script mostly uses generic packages, however one package of interest is the `gisaimsr` package, which contains the GBR features dataset. This package needs to be installed from GitHub using the `pak` package. If you do not have `pak` installed, you will need to first install it from CRAN using `install.packages("pak")`.
+
+```{r}
+
+#install "special" packages
+#install.packages("pak")
+#pak::pak("https://github.com/open-AIMS/gisaimsr")
+
+#load packages
+library(sf)
+library(dplyr)
+library(tidyr)
+library(readr)
+library(stringr)
+library(gisaimsr)
+library(tmap)
+
+```
+
+# Data
+
+Next we can load in the datasets, specifically we have:
+
+ - A csv detailed Crown-of-Thorns Starfish (COTS) locations
+ - A csv of Ecorrap benthic sites
+ - A spatial dataset extract from within the `gisaimsr` package containing Great Barrier Reef features
+ - A list of named locations that we manually created, built from reading other AIMS repository pages.
+
+
+```{r}
+
+#pull data out of the gisaimsr package
+all_gbr_data <- gbr_feat
+
+#load the cots data
+cots_data <- read_csv("cots_data.csv")
+
+#load the ecorrap data
+ecorrap_data <- read_csv("ecorrap_benthic_data.csv")
+
+#load the named locations dataset
+named_locations <- read_csv("named_locations.csv")
+
+```
+
+## Exploration and Cleaning
+
+The first thing to do is explore the data, for example understading what the column names are and what the data looks like:
+
+```{r}
+
+#return column names of the cots data
+colnames(cots_data)
+
+```
+
+```{r}
+
+#return the column names of the ecorrap data
+colnames(ecorrap_data)
+
+```
+
+Looking at these, the most important columns right now are the latitude and longitude names - which we can see are "LATITUDE", "LONGITUDE" and "site_latitude", "site_longitude".
+
+Following this, we can also do the same for the GBR features dataset. 
+
+```{r}
+
+#learn the column names of the GBR features dataset
+colnames(all_gbr_data)
+
+```
+
+Doing this we learn that the most important columns are the `FEAT_NAME` and `GBR_NAME` columns, which contain the feature type (e.g. reef, 
+island) and the name of the feature respectively. As seen below:
+
+```{r}
+
+#get an understanding of what is in each column
+head(reefs_and_islands)
+
+```
+
+Understanding this, we can then filter the GBR features dataset to only include reefs and islands, which is what we are interested in.
+
+```{r}
+
+#get a vector of all the unique feature names
+unique(all_gbr_data$FEAT_NAME)
+
+```
+
+```{r}
+
+#filter the GBR features dataset to only include reefs and islands
+reefs_and_islands <- all_gbr_data |>
+    filter(FEAT_NAME %in% c("Reef", "Island"))
+
+```
+
+Next, listing the unique GBR names shows us that several of the locations are not named - and thus are not helpful for our analysis. We can filter these out by removing the "U/N" locations.
+
+```{r}
+
+#remove unnamed reefs and islands
+named_reefs_and_islands <- reefs_and_islands |> 
+    filter(str_detect(GBR_NAME, "U/N", negate = TRUE))
+
+```
+
+## Transformation
+
+With the data cleaned and understood, we can convert csv data to sf objects as follows:
+
+```{r}
+
+#convert the cots dataset to a sf object
+cots_sf <- cots_data |> 
+    st_as_sf(
+        coords = c("LONGITUDE", "LATITUDE"), 
+        crs = 4326, 
+        remove = FALSE)
+
+#convert the ecorrap dataset to a sf object
+ecorrap_sf <- ecorrap_data |>
+    st_as_sf(
+        coords = c("site_longitude", "site_latitude"), 
+        crs = 4326, 
+        remove = FALSE)
+
+```
+
+Which looks like this:
+
+```{r}
+
+head(cots_sf)
+
+```
+
+Note how we needed to know the names of the lat and long columns to do this, and how they are included within the geom column
+
+## Identifying Named Locations
+
+To create sites for the named locations we can compare our list of names against the entire GBR Features dataset and look for matches. There are several ways to do this so we will walk through the process in stages.
+
+The first option is to look for complete matches:
+
+```{r}
+
+#full matches
+exists <- named_locations$Name %in% named_reefs_and_islands$GBR_NAME
+
+ratio <- sum(exists == TRUE) / sum(exists == FALSE)
+
+```
+
+However, using this method we only return about a 30% match rate, which is not very good.
+
+The next option is to use partial matches:
+
+```{r}
+
+#obtain partial matches
+partial_matches <- purrr::map(named_locations$Name, ~ unique(str_extract(named_reefs_and_islands$GBR_NAME, .x)))
+
+#drop the irrelevant Na values in the first column
+partial_matches <- purrr::map(partial_matches, ~ .x[2])
+
+```
+
+This method returns about a 85% match rate, which is much better. However, we still have some locations that are not matched, such as "Dungeness" and "Aukane". Further manual inspection of the dataset confirms that these names do not exist inside the dataset, so we will need to add these manually.
+
+However before we do this, we will need to actually filter our GBR features dataset:
+
+```{r}
+
+#collapse the named locations into a single string
+names <- str_c(named_locations$Name, collapse = "|")
+
+#filter the named reefs and islands dataset to only include the names we are interested in
+targeted_reefs_and_islands <- named_reefs_and_islands |> 
+    filter(str_detect(GBR_NAME, names))
+
+```
+
+## Creating Custom Locations
+
+To create custom locations all that is needed is the latitude and longitude coordinates or the location we are interested in. However it should be noted that these extra sites will only be points, not polygons.
+```{r}
+
+#create additional locations
+extra_points <- st_as_sf(
+    data.frame(
+        GBR_NAME = c("Dungeness", "Aukane"),
+        geom = c(
+            st_sfc(st_point(c(142.9479, -10.0004)), crs = 4326),
+            st_sfc(st_point(c(143.3915, -9.8664)), crs = 4326)
+        )    
+    )
+)
+
+```
+
+## Map Data
+
+It is now time to map each of the datasets to visually confirm these look how we want them too.
+
+```{r}
+
+#create interactive maps for the fun of it
+tmap_mode("view")
+
+```
+
+### COTS Data
+
+```{r}
+
+tm_shape(cots_sf) +
+    tm_dots()
+
+```
+
+### Ecorrap Data
+
+```{r}
+
+tm_shape(ecorrap_sf) +
+    tm_dots()
+
+```
+
+### Named Locations
+
+```{r}
+
+tm_shape(targeted_reefs_and_islands) +
+    tm_polygons()
+
+```
+
+Doing the visual inspection shows us that the Masig location we found is not in the same spot as is shown on the AIMS data repository, therefore it looks like we will need to add one extra site:
+
+```{r}
+
+#create a new point for Masig
+correct_masig <- st_as_sf(
+    data.frame(
+        GBR_NAME = "Masig",
+        geom = st_sfc(st_point(c(143.4052, -9.7449)), crs = 4326)
+    )
+)
+
+#bind it to our other dataset.
+extra_points <- extra_points |> 
+    rbind(correct_masig)
+
+```
+
+### Custom Locations
+
+```{r}
+
+tm_shape(extra_points) +
+    tm_dots()
+
+```
