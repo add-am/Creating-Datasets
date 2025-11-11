@@ -52,6 +52,11 @@ ecorrap_data <- read_csv("ecorrap_benthic_data.csv")
 #load the named locations dataset
 named_locations <- read_csv("named_locations.csv")
 
+ecorrap_named_locations <- c(
+    "Aukane Island", "Davies Reef", "Dungeness Reef", "Halfway Island",
+    "Heron Island", "Lady Musgrave Island", "Lizard Island", "Masi Island", 
+    "Moore", "Orpheus", "Pelorus")
+
 ```
 
 ## Exploration and Cleaning
@@ -89,7 +94,7 @@ island) and the name of the feature respectively. As seen below:
 ```{r}
 
 #get an understanding of what is in each column
-head(reefs_and_islands)
+#head(reefs_and_islands)
 
 ```
 
@@ -193,6 +198,25 @@ names <- str_c(named_locations$Name, collapse = "|")
 #filter the named reefs and islands dataset to only include the names we are interested in
 targeted_reefs_and_islands <- named_reefs_and_islands |> 
     filter(str_detect(GBR_NAME, names))
+
+```
+
+```{r}
+
+#obtain partial matches
+partial_matches <- purrr::map(ecorrap_named_locations, ~ unique(str_extract(named_reefs_and_islands$GBR_NAME, .x)))
+
+#drop the irrelevant Na values in the first column
+partial_matches <- purrr::map(partial_matches, ~ .x[2])
+
+#collapse the named locations into a single string
+names <- str_c(ecorrap_named_locations, collapse = "|")
+
+#filter the named reefs and islands dataset to only include the names we are interested in
+ecorrap_named_locations <- named_reefs_and_islands |> 
+    filter(str_detect(GBR_NAME, names))
+
+st_write(ecorrap_named_locations, "ecorrap_orthomosaic_sites.shp")
 
 ```
 
